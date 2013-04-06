@@ -1,0 +1,86 @@
+#!/usr/bin/env ruby1.9.1
+require 'zepplen_aws'
+require 'optparse'
+
+options = {}
+
+OptionParser.new do |opts|
+	opts.banner = "Zepplen Tools: Route53 DNS Update"
+
+	options[:config_file] = nil
+	opts.on('--config-file FILE', 'YAML config file with options to load') do |file|
+		options[:config_file] = file
+	end
+
+	options[:aws_access_key_id] = nil
+	opts.on('--access-key-id AWS_ACCESS_KEY', 'AWS Access Key ID (Leave blank to use IAM Role auth)') do |key|
+		options[:aws_access_key_id] = key
+	end
+
+	options[:aws_secret_access_key] = nil
+	opts.on('--secret-access-key AWS_SECRET_KEY', 'AWS Secret Key (Leave blank to use IAM Role auth)') do |key|
+		options[:aws_secret_access_key] = key
+	end
+
+	#TODO: Figure out a good way to set this.... aws-sdk does not seem to have a good method at the moment
+	options[:aws_region] = nil
+	opts.on('--region REGION', 'AWS Region(s) to process') do |region|
+		options[:aws_region] = region
+	end
+
+	options[:ec2_tags] = nil
+	opts.on('--ec2-tags NAME-1,NAME-2', Array, 'EC2 tag name(s) to derive DNS from (name collisions resolved by order specified)') do |tag|
+		options[:ec2_tags] = tag
+	end
+
+	options[:elb] = false
+	opts.on('--elb', 'Enalbe ELB DNS (ELB names take precidence over EC2 tags if enabled)') do
+		options[:elb] = true
+	end
+
+	options[:public_zones] = nil
+	opts.on('--public-zones ZONE_ID,ZONE_NAME-2', Array, 'Rout53 zone to populate with public DNS/IP') do |zone|
+		options[:public_zones] = zone
+	end
+
+	options[:private_zones] = nil
+	opts.on('--private-zones ZONE_ID,ZONE_NAME-2', Array, 'Rout53 zone to populate with private DNS/IP') do |zone|
+		options[:private_zones] = zone
+	end
+
+	options[:public_zone_names] = nil
+	opts.on('--public-zone-names ZONE_NAME-1,ZONE_NAME-2', Array, 'Rout53 zone to populate with public DNS/IP  (Use --public-zone if multiple zones exist with the same name)') do |zone|
+		options[:public_zone_names] = zone
+	end
+
+	options[:private_zone_names] = nil
+	opts.on('--private-zone-names ZONE_NAME,ZONE_NAME-2', Array, 'Rout53 zone to populate with private DNS/IP (Use --private-zone if multiple zones exist with the same name)') do |zone|
+		options[:private_zone_names] = zone
+	end
+
+	options[:wildcards] = false
+	opts.on('--wildcards', 'Also create wildcard DNS entries') do
+		options[:wildcards] = true
+	end
+
+	options[:dns_type] = 'CNAME'
+	opts.on('--dns-record-type [TYPE]', [:CNAME, :A], 'Type of DNS entry to create (CNAME, ARECORD). ELBs will always get CNAME records') do |type|
+		options[:dns_type] = type
+	end 
+
+	options[:ttl] = 100
+	opts.on('--ttl SECONDS', Integer, 'DNS TTL') do |seconds|
+		options[:ttl] = seconds
+	end
+
+	options[:commit] = false
+	opts.on('--commit', 'Commit the changes') do
+		options[:commit] = true
+	end
+
+end.parse!
+
+#TODO: Add checks to validate the parameters
+ZepplenAWS::Env.options = options
+auto_dns = ZepplenAWS::AutoDNS.new()
+auto_dns.run!
