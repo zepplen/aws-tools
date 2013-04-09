@@ -1,0 +1,255 @@
+#!/usr/bin/env ruby1.9.1
+require 'zepplen_aws'
+require 'optparse'
+
+options = {}
+
+OptionParser.new do |opts|
+	opts.banner = "Zepplen Tools: User Database Management Tool"
+
+	options[:config_file] = nil
+	opts.on('--config-file FILE', 'YAML config file with options to load') do |file|
+		options[:config_file] = file
+	end
+
+	options[:aws_access_key_id] = nil
+	opts.on('--access-key-id AWS_ACCESS_KEY', 'AWS Access Key ID (Leave blank to use IAM Role auth)') do |key|
+		options[:aws_access_key_id] = key
+	end
+
+	options[:aws_secret_access_key] = nil
+	opts.on('--secret-access-key AWS_SECRET_KEY', 'AWS Secret Key (Leave blank to use IAM Role auth)') do |key|
+		options[:aws_secret_access_key] = key
+	end
+
+	options[:dynamo_table] = nil
+	opts.on('--dynamo-table TABLE', 'Dynamo table name (default: users)') do |table|
+		options[:dynamo_table] = table
+	end
+
+	options[:dynamo_primary_key] = 'user_name'
+	opts.on('--dynamo-primary-key KEY_NAME', 'Column name of table primary key (default: user_name)') do |key|
+		options[:dynamo_primary_key] = key
+	end
+
+	options[:metadata_label] = '__zepplen_user_metadata__'
+	opts.on('--metadata-label LABEL', 'This script keeps a row of metadata in the table. (default: __zepplen_user_metadata__)') do |label|
+		options[:metadata_label] = label
+	end
+
+	options[:configure] = false
+	opts.on('--configure', 'Create and Configure User Environment') do
+		options[:configure] = true
+	end
+
+	options[:user_file_bucket] = nil
+	opts.on('--user-file-bucket S3_PATH', "Defines S3 bucket used to store user's files") do |s3_path|
+		options[:user_file_bucket] = s3_path
+	end
+
+	options[:user] = nil
+	opts.on('-u', '--user USER', 'User To Edit') do |user|
+		options[:user] = user
+	end
+
+	options[:public_key] = nil
+	opts.on('--public-key KEY', "Users SSH public key") do |key|
+		options[:public_key] = key
+	end
+
+	options[:full_name] = nil
+	opts.on('--full-name NAME', "User's name") do |name|
+		options[:full_name] = name
+	end
+
+	options[:access_tag] = []
+	opts.on('--add-access-tag TAG', 'EC2 Tag Name') do |tag_name|
+		options[:access_tag] << tag_name
+	end
+
+	options[:access_tag_value] = []
+	opts.on('--add-access-value VALUE', 'Value to match to EC2 Tag Name') do |tag_value|
+		options[:access_tag_value] << tag_value
+	end
+
+	options[:sudo_access] = []
+	opts.on('--add-sudo [SUDO]', 'Pass a flag to give sudo access to use') do |sudo|
+		options[:sudo_access] << sudo
+	end
+
+	options[:remove_access_tag] = []
+	opts.on('--remove-access-tag TAG', 'EC2 Tag Name') do |tag_name|
+		options[:remove_access_tag] << tag_name
+	end
+
+	options[:remove_access_tag_value] = []
+	opts.on('--remove-access-value VALUE', 'Value to remove access from') do |tag_value|
+		options[:remove_access_tag_value] << tag_value
+	end
+
+	options[:state] = nil
+	opts.on('--state STATE', [:ACTIVE, :INACTIVE], 'User State (ACTIVE, INACTIVE)') do |state|
+		options[:state] = state
+	end
+
+	options[:files] = []
+	opts.on('--add-file FILE_PATH', 'Path to file on local server') do |file|
+		options[:files] << file
+	end
+
+	options[:remote_file_paths] = []
+	opts.on('--remote-file-path FILE_PATH', 'Path of where file to live on remote servers') do |file|
+		options[:remote_file_paths] << file
+	end
+
+	options[:remote_file_mode] = []
+	opts.on('--remote-file-mode MODE', 'Permissions to set on file (default: 0600)') do |mode|
+		options[:remote_file_mode] << mode
+	end
+
+	options[:remove_files] = []
+	opts.on('--remove-file FILE', 'File to remove from profile (File will not be removed from server)') do |file|
+		options[:remove_files] << file
+	end
+
+	#TODO: Figure out a good way to set this.... aws-sdk does not seem to have a good method at the moment
+end.parse!
+
+#TODO: Add checks to validate the parameters
+ZepplenAWS::Env.options = options
+
+if(ZepplenAWS::Env[:dynamo_table] == nil)
+	ZepplenAWS::Env[:dynamo_table] = 'users'
+end
+
+if(ZepplenAWS::Env[:dynamo_primary_key] == nil)
+	ZepplenAWS::Env[:dynamo_primary_key] = 'user_name'
+end
+
+if(ZepplenAWS::Env[:metadata_label] == nil)
+	ZepplenAWS::Env[:metadata_label] = '__zepplen_user_metadata__'
+end
+
+server_users = ZepplenAWS::ServerUsers.new()
+
+if(options[:configure])
+	configs = {}
+	puts "Welcome To Zepplen User Administration"
+	puts
+	puts "We will start by gathering the infomration we need to configure your environment"
+	puts
+
+	print "DynamoDB Table Name [#{ZepplenAWS::Env[:dynamo_table]}]: "
+	dynamo_table = gets.chomp
+	if(dynamo_table != '')
+		ZepplenAWS::Env[:dynamo_table] = dynamo_table
+	end
+
+	puts
+	print "DynamoDB Table Hash Key [#{ZepplenAWS::Env[:dynamo_primary_key]}]: "
+	dynamo_primary_key = gets.chomp
+	if(dynamo_primary_key != '')
+		ZepplenAWS::Env[:dynamo_primary_key] = dynamo_primary_key
+	end
+
+	puts
+	print "Metadata Row Label [#{ZepplenAWS::Env[:metadata_label]}]: "
+	metadata_label = gets.chomp
+	if(metadata_label != '')
+		ZepplenAWS::Env[:metadata_label] = metadata_label
+	end
+
+	puts
+	print "Max age (days) of public keys [90]: "
+	configs[:max_key_age] = gets.chomp
+	if(configs[:max_key_age] == '')
+		configs[:max_key_age] = 90
+	else
+		configs[:max_key_age] = configs[:max_key_age].to_i
+	end
+	
+	puts
+	print "Supported EC2 Tags to taget on (seperate with spaces)[Name Env]: "
+	tags = gets.chomp
+	if(tags == '')
+		configs[:tags] = ['Name', 'Env']
+	else
+		configs[:tags] = tags.split(' ')
+	end
+
+	puts
+	print "Starting UID [2000]: "
+	next_uid = gets.chomp
+	if(next_uid == '')
+		configs[:next_uid] = 2000
+	else
+		configs[:next_uid] = next_uid.to_i
+	end
+
+	puts
+	print "S3 Bucket for user files (leave blank to disable user files): "
+	user_files = gets.chomp
+	if(user_files == '')
+		configs[:user_file_bucket] = nil
+	else
+		configs[:user_file_bucket] = user_files
+	end
+
+	puts
+	print "Sudo Group [sudo]: "
+	sudo_group = gets.chomp
+	if(sudo_group == '')
+		sudo_group = 'sudo'
+	end
+	configs[:sudo_group] = sudo_group
+
+	puts
+	server_users.configure(configs)
+	puts "All Done!"
+end
+if(options[:user_file_bucket])
+	server_users.user_file_bucket = options[:user_file_bucket]
+end
+if(options[:user])
+	user = ZepplenAWS::ServerUser.new(options[:user])
+	if(options[:public_key])
+		user.public_key = options[:public_key]
+	end
+	if(options[:full_name])
+		user.full_name = options[:full_name]
+	end
+	if(options[:state])
+		user.state = options[:state]
+	end
+	options[:access_tag].each_with_index do |tag, index|
+		sudo = (options[:sudo_access].length >= index && options[:sudo_access][index])
+		if(!options[:access_tag_value][index])
+			raise '--add-access-value Required'
+		end
+		user.add_access(tag, options[:access_tag_value][index], sudo)
+	end
+	options[:remove_access_tag].each_with_index do |tag, index|
+		user.remove_access(tag, options[:remove_access_tag_value][index])
+	end
+	options[:files].each_with_index do |file, index|
+		file_permissions = '600'
+		if(options[:remote_file_paths][index])
+			remote_file_path = options[:remote_file_paths][index]
+		else
+			raise '--remote-file-path Required with --add-file'
+		end
+		if(options[:remote_file_mode][index])
+			file_permissions = options[:remote_file_mode][index]
+		end
+		user.add_file_path(file, remote_file_path, file_permissions)
+	end
+	options[:remove_files].each do |file|
+		user.remove_file(file)
+	end
+	user.save()
+	user.display()
+else
+	server_users.users.each_pair do |user_name,user|
+		user.display()
+	end
+end

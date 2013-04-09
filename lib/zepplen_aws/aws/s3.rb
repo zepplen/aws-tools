@@ -12,17 +12,18 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-
-require 'yaml'
-require 'colorize'
-require 'zepplen_aws/env'
-
 module ZepplenAWS
-	autoload :AWS, 'zepplen_aws/aws'
-	autoload :AutoDNS, 'zepplen_aws/auto_dns'
-	autoload :ServerUsers, 'zepplen_aws/server_users'
-	autoload :ServerLocalUsers, 'zepplen_aws/server_local_users'
-	autoload :ServerUser, 'zepplen_aws/server_user'
-end
+	module AWS
+		class S3
 
-ZepplenAWS::Env.init!
+			def initialize()
+				@object = ::AWS::S3.new()
+			end
+
+			def method_missing(method, *args)
+				@object.public_send(method, *args)
+			end
+
+		end
+	end
+end

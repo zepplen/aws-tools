@@ -14,12 +14,16 @@
 
 Gem::Specification.new do |s|
 	s.name = 'zepplen_aws'
-	s.version = '0.0.1'
+	s.version = '0.0.2'
 	s.date = '2013-04-05'
 	s.summary = 'Aws Toolset'
 	s.description = 'AWS tools for common needs'
 	s.authors = ["Mark Trimmer"]
 	s.email = 'zepplen.aws@gmail.com'
+	s.files = Dir['lib/**/*.rb'] + Dir['bin/*'] + Dir['[A-Z]*']
+	s.homepage = 'https://github.com/zepplen/aws-tools'
 	s.add_runtime_dependency "aws-sdk", ["> 1.8.0"]
 	s.add_runtime_dependency "colorize", [">= 0.5.8"]
+	s.has_rdoc = true
+	s.executables << 'zepplen_dns'
 end

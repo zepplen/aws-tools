@@ -1,0 +1,74 @@
+#!/usr/bin/env ruby1.9.1
+require 'zepplen_aws'
+require 'optparse'
+
+options = {}
+
+OptionParser.new do |opts|
+	opts.banner = "Zepplen Tools: Local Linux Users Update"
+
+	options[:config_file] = nil
+	opts.on('--config-file FILE', 'YAML config file with options to load') do |file|
+		options[:config_file] = file
+	end
+
+	options[:aws_access_key_id] = nil
+	opts.on('--access-key-id AWS_ACCESS_KEY', 'AWS Access Key ID (Leave blank to use IAM Role auth)') do |key|
+		options[:aws_access_key_id] = key
+	end
+
+	options[:aws_secret_access_key] = nil
+	opts.on('--secret-access-key AWS_SECRET_KEY', 'AWS Secret Key (Leave blank to use IAM Role auth)') do |key|
+		options[:aws_secret_access_key] = key
+	end
+
+	options[:dynamo_table] = nil
+	opts.on('--dynamo-table TABLE', 'Dynamo table name') do |table|
+		options[:dynamo_table] = table
+	end
+
+	options[:dynamo_primary_key] = 'user_name'
+	opts.on('--dynamo-primary-key KEY_NAME', 'Column name of table primary key (default: user_name)') do |key|
+		options[:dynamo_primary_key] = key
+	end
+
+	options[:metadata_label] = '__zepplen_user_metadata__'
+	opts.on('--metadata-label LABEL', 'This script keeps a row of metadata in the table. (default: __zepplen_user_metadata__)') do |label|
+		options[:metadata_label] = label
+	end
+
+	options[:local_users] = nil
+	opts.on('--local-users-file FILE', 'Location to store local state cache (default: /etc/zeppeln_aws/local_users.yaml)') do |file|
+		options[:local_users] = file
+	end
+
+	#TODO: Figure out a good way to set this.... aws-sdk does not seem to have a good method at the moment
+
+	options[:commit] = false
+	opts.on('--commit', 'Commit the changes') do
+		options[:commit] = true
+	end
+
+end.parse!
+
+#TODO: Add checks to validate the parameters
+ZepplenAWS::Env.options = options
+if(ZepplenAWS::Env[:dynamo_table] == nil)
+	ZepplenAWS::Env[:dynamo_table] = 'users'
+end
+
+if(ZepplenAWS::Env[:dynamo_primary_key] == nil)
+	ZepplenAWS::Env[:dynamo_primary_key] = 'user_name'
+end
+
+if(ZepplenAWS::Env[:metadata_label] == nil)
+	ZepplenAWS::Env[:metadata_label] = '__zepplen_user_metadata__'
+end
+
+if(ZepplenAWS::Env[:local_users] == nil)
+	ZepplenAWS::Env[:local_users] = '/etc/zeppeln_aws/local_users.yaml'
+end
+
+server_users = ZepplenAWS::ServerLocalUsers.new()
+server_users.local_user_file = ZepplenAWS::Env[:local_users]
+server_users.update!(options[:commit])

@@ -62,11 +62,19 @@ module ZepplenAWS
 
 		# Allows user access to single option
 		#
-		# @param [Any] Key to retrieve
+		# @param [Object] Key to retrieve
 		#
-		# @return [Any] Request option
+		# @return [Object] Request option
 		def self.[](key)
 			return @options[key]
+		end
+
+		# Allow user access to set single option
+		#
+		# @param [Object] option key
+		# @param [Object] option value
+		def self.[]=(key, value)
+			@options[key] = value
 		end
 
 

@@ -23,8 +23,11 @@ module ZepplenAWS
 		require 'aws-sdk'
 
 		autoload :EC2, 'zepplen_aws/aws/ec2'
+		autoload :S3, 'zepplen_aws/aws/s3'
 		autoload :ELB, 'zepplen_aws/aws/elb'
 		autoload :Route53, 'zepplen_aws/aws/route53'
+		autoload :DynamoDB, 'zepplen_aws/aws/dynamo_db'
+		autoload :InstanceData, 'zepplen_aws/aws/instance_data'
 
 		def self.init!()
 			::AWS.config(:access_key_id => Env.options[:aws_access_key_id], :secret_access_key => Env.options[:aws_secret_access_key])
