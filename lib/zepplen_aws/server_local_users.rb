@@ -20,7 +20,7 @@ module ZepplenAWS
 	# written by you! 
 	#
 	class ServerLocalUsers
-	require 'libcfruby/os'
+	require 'etc'
 
 		def initialize(dynamo_table = nil, dynamo_primary_key = nil, metadata_label = nil)
 			@dynamo_table = dynamo_table || Env[:dynamo_table]
@@ -90,8 +90,20 @@ module ZepplenAWS
 
 		def make_server_users(users, static_update)
 			#TODO: Write Linux User Admin Object
+			begin
+				# Yes, we could probably just assume 0, but this seemed safer
+				etc_user = Etc.getpwnam('root')
+				root_uid = etc_user['uid']
+			rescue ArgumentError
+				raise "Can Not Find Root User!!!"
+			end
 			users[:local_users].each_pair do |user_name, user_data|
-				system "useradd -d /home/#{user_name} -c \"#{user_data[:full_name]}\" -m -s #{user_data[:shell]} -u #{user_data[:user_id]} -U #{user_name}"
+				begin
+					etc_user = Etc.getpwnam(user_name)
+				rescue ArgumentError
+					system "useradd -d /home/#{user_name} -c \"#{user_data[:full_name]}\" -m -s #{user_data[:shell]} -u #{user_data[:user_id]} -U #{user_name}"
+				end
+				user_gid = Etc.getgrnam(user_name)['gid']
 				if(user_data[:sudo])
 					system "usermod -a -G #{users[:metadata][:sudo_group]} #{user_name}"
 				else
@@ -99,26 +111,27 @@ module ZepplenAWS
 				end
 				if(!File.exist?("/home/#{user_name}/.ssh"))
 					system "mkdir /home/#{user_name}/.ssh"
-					system "chmod 600 /home/#{user_name}/.ssh"
+					system "chmod 700 /home/#{user_name}/.ssh"
+					system "chown #{user_name}:#{user_name} /home/#{user_name}/.ssh"
 				end
 				if(Date.parse(user_data[:public_key_expire]) > Date.today)
-					write_local_file("/home/#{user_name}/.ssh/authorized_keys", '600', user_data[:public_key])
+					write_local_file("/home/#{user_name}/.ssh/authorized_keys", '640', user_data[:public_key], root_uid, user_gid)
 				else
-					write_local_file("/home/#{user_name}/.ssh/authorized_keys", '600', 'Revoked')
+					write_local_file("/home/#{user_name}/.ssh/authorized_keys", '640', 'Revoked', user_data[:user_id], user_gid)
 				end
 				if(static_update[user_name] && user_data[:files])
 					s3 = AWS::S3.new()
 					bucket = s3.buckets[users[:metadata][:user_file_bucket]]
 					user_data[:files].each_pair do |file_name, file_data|
 						s3object = bucket.objects[file_data['s3_path']]
-						write_local_file("/home/#{user_name}/#{file_name}", file_data['mode'], s3object.read)
+						write_local_file("/home/#{user_name}/#{file_name}", file_data['mode'], s3object.read, user_data[:user_id], user_gid)
 					end
 				else
 				end
 			end
 		end
 
-		def write_local_file(path, mode, contents)
+		def write_local_file(path, mode, contents, user_id, group_id)
 			begin
 				mode = mode.to_i(8)
 				if(!Dir.exist?(File.dirname(path)))
@@ -126,6 +139,7 @@ module ZepplenAWS
 				end
 				fout = File.open(path, 'w')
 				fout.chmod(mode)
+				fout.chown(user_id, group_id)
 				fout.write(contents)
 				fout.close
 			rescue => e
@@ -159,6 +173,24 @@ module ZepplenAWS
 		end
 
 		def save_to_file(users)
+			folder_name = File.dirname(@local_user_file)
+			if(!Dir.exist?(folder_name))
+				base_path = '/'
+				folder_name.split('/').each do |dir|
+					if(dir != '')
+						base_path += "#{dir}/"
+puts "Checking #{base_path}"
+						if(!Dir.exist?(base_path))
+							begin
+puts "Making #{base_path}"
+								Dir.mkdir(base_path, 0700)
+							rescue SystemCallError
+								raise "Can not create folder #{base_path}"
+							end
+						end
+					end
+				end
+			end
 			fout = File.open(@local_user_file, 'w')
 			fout.write(users.to_yaml)
 			fout.chmod(0600)
@@ -171,6 +203,7 @@ module ZepplenAWS
 				users = YAML::load_stream(File.open(@local_user_file))[0]
 			else
 				users = {}
+				users[:local_users] = {}
 			end
 			return users
 		end

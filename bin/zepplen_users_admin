@@ -169,40 +169,61 @@ if(options[:configure])
 	end
 	
 	puts
-	print "Supported EC2 Tags to taget on (seperate with spaces)[Name Env]: "
+	if(server_users.tags && server_users.tags.length > 0)
+		default = server_users.tags
+	else
+		default = ['Name', 'Env']
+	end
+	print "Supported EC2 Tags to taget on (seperate with spaces)[#{default.join(' ')}]: "
 	tags = gets.chomp
 	if(tags == '')
-		configs[:tags] = ['Name', 'Env']
+		configs[:tags] = default
 	else
 		configs[:tags] = tags.split(' ')
 	end
 
 	puts
-	print "Starting UID [2000]: "
+	if(server_users.next_uid != 0)
+		default = server_users.next_uid
+	else
+		default = 2000
+	end
+	print "Starting UID [#{default}]: "
 	next_uid = gets.chomp
 	if(next_uid == '')
-		configs[:next_uid] = 2000
+		configs[:next_uid] = default
 	else
 		configs[:next_uid] = next_uid.to_i
 	end
 
 	puts
-	print "S3 Bucket for user files (leave blank to disable user files): "
+	if(server_users.user_file_bucket)
+		default = server_users.user_file_bucket
+	else
+		default = nil
+	end
+	print "S3 Bucket for user files (leave blank to disable user files) [#{default}]: "
 	user_files = gets.chomp
 	if(user_files == '')
-		configs[:user_file_bucket] = nil
+		configs[:user_file_bucket] = default
 	else
 		configs[:user_file_bucket] = user_files
 	end
 
 	puts
-	print "Sudo Group [sudo]: "
+	if(server_users.sudo_group)
+		default = server_users.sudo_group
+	else
+		default = 'sudo'
+	end
+	print "Sudo Group [#{default}]: "
 	sudo_group = gets.chomp
 	if(sudo_group == '')
-		sudo_group = 'sudo'
+		sudo_group = default
 	end
 	configs[:sudo_group] = sudo_group
 
+	puts configs.to_yaml
 	puts
 	server_users.configure(configs)
 	puts "All Done!"

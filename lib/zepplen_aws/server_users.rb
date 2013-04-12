@@ -19,13 +19,19 @@ module ZepplenAWS
 	# This class is intended to be used by both the CLI scripts provided, and 3rd party tools
 	# written by you! 
 	#
+	# The metadata for the environment (options set using the configure method), are stored
+	# in a DynamoDB row along with the users. The default name for this row is '__zepplen_user_metadata__'.
+	# This name can be changed via the metadata_label parameter
+	#
+	# 
+	#
 	class ServerUsers
 
 		def initialize(dynamo_table = nil, dynamo_primary_key = nil, metadata_label = nil)
-			@dynamo_table = dynamo_table || Env[:dynamo_table]
-			@dynamo_primary_key = dynamo_primary_key || Env[:dynamo_primary_key]
+			@dynamo_table = dynamo_table || Env[:dynamo_table] || 'users'
+			@dynamo_primary_key = dynamo_primary_key || Env[:dynamo_primary_key] || 'user_name'
 			@dynamo_primary_key = @dynamo_primary_key.to_sym
-			@metadata_label = metadata_label || Env[:metadata_label]
+			@metadata_label = metadata_label || Env[:metadata_label] || '__zepplen_user_metadata__'
 
 			if(@dynamo_table == nil)
 				raise "DynamoDB Table Name Required"
@@ -59,7 +65,7 @@ module ZepplenAWS
 		end
 
 		def identity()
-			return @metadata.attributes[:identity]
+			return @metadata.attributes[:identity].to_i
 		end
 
 		def user_file_bucket()
@@ -72,7 +78,7 @@ module ZepplenAWS
 		end
 
 		def max_key_age()
-			return @metadata.attributes[:max_key_age]
+			return @metadata.attributes[:max_key_age].to_i
 		end
 
 		def max_key_age=(key_age)
@@ -81,7 +87,7 @@ module ZepplenAWS
 		end
 
 		def next_uid()
-			return @metadata.attributes[:next_uid]
+			return @metadata.attributes[:next_uid].to_i
 		end
 
 		def next_uid=(next_uid)
@@ -99,7 +105,7 @@ module ZepplenAWS
 		end
 
 		def tags()
-			return @metadata.attributes[:tags]
+			return @metadata.attributes[:tags].to_a
 		end
 
 		def tags=(tags)
@@ -151,6 +157,8 @@ module ZepplenAWS
 				end
 				if(@metadata.attributes[:identity] == nil)
 					item_data.set(:identity => 0)
+				else
+					item_data.add(:identity => 1)
 				end
 			end
 		end

@@ -14,7 +14,7 @@
 
 Gem::Specification.new do |s|
 	s.name = 'zepplen_aws'
-	s.version = '0.0.2'
+	s.version = '0.0.3'
 	s.date = '2013-04-05'
 	s.summary = 'Aws Toolset'
 	s.description = 'AWS tools for common needs'
@@ -25,5 +25,8 @@ Gem::Specification.new do |s|
 	s.add_runtime_dependency "aws-sdk", ["> 1.8.0"]
 	s.add_runtime_dependency "colorize", [">= 0.5.8"]
 	s.has_rdoc = true
+	s.required_ruby_version= '>= 1.9.1'
 	s.executables << 'zepplen_dns'
+	s.executables << 'zepplen_users'
+	s.executables << 'zepplen_users_admin'
 end
