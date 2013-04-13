@@ -48,6 +48,7 @@ Required zepplen_users Permissions
 * S3 (optional)
   * s3:GetObject
 
+##Zepplen DNS
 Required zepplen_dns Permissions
 * EC2
   * ec2:DescribeInstances
