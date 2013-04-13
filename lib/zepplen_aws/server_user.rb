@@ -21,52 +21,50 @@ module ZepplenAWS
 	#
 	class ServerUser
 
-		def initialize(user_name, dynamo_table = nil, dynamo_primary_key = nil, metadata_label = nil, user_row=nil, metadata_row=nil, server_users=nil)
+		# = ServerUser
+		# If you are using the default DynamoDB table name 'users' only user_name is required to create
+		# a ServerUser object. If you have deviated from this standard you must pass dynamo_table name in
+		# as either a paramater, or via the Env class.
+		#
+		#	@param [String] User Name
+		# @param optional [String] Name of DynamoDB to read settings and users from
+		# @param optional [AWS::DynamoDB::Item] DynamoDB Item reflecting the requested user (used to prevent multiple DB Hits)
+		# @param optional [AWS::DynamoDB::Item] DynamoDB Item reflecting the metadata setings (used to prevent multiple DB Hits)
+		# @param optional [ZepplenAWS::ServerUsers] ServerUsers object (used to prevent multiple DB Hits)
+		def initialize(user_name, dynamo_table = nil, user_row=nil, metadata_row=nil, server_users=nil)
 			@user_name = user_name
 			@user_data = {}
+			@remove_s3_files = []
 			@dirty = false
 			@marshaled_columns = [/^TAG__/, /^files$/]
 
-			@dynamo_table = dynamo_table || Env[:dynamo_table]
-			@dynamo_primary_key = dynamo_primary_key || Env[:dynamo_primary_key]
-			@metadata_label = metadata_label || Env[:metadata_label]
+			@dynamo_table = dynamo_table || Env[:dynamo_table] || 'users'
 
 			if(@dynamo_table == nil)
-				raise "DynamoDB Table Name Required"
-			end
-
-			if(@dynamo_primary_key == nil)
-				raise "DynamoDB Table Hash Key Required"
-			end
-
-			if(@metadata_label == nil)
-				raise "DynamoDB Metadata Label Required"
-			end
-
-			if(@user_name == @metadata_label)
-				raise "Metadata Label can not be used for a User Name"
+				raise Exceptions::Users::MissingOption, "DynamoDB Table Name Required"
 			end
 
 			@dynamo = AWS::DynamoDB.new()
 			@table = @dynamo.tables[@dynamo_table]
-			@table.hash_key = [@dynamo_primary_key.to_sym, :string]
+			@table.hash_key = {:type => :string}
+			@table.range_key = {:user_name => :string}
 			if(user_row != nil && user_row.attributes[:user_name] == user_name)
 				@user_row = user_row
 			else
-				@user_row = @table.items[@user_name]
+				@user_row = @table.items['USER', @user_name]
 			end
 			get_user_data(@user_row.attributes)
 
 			if(metadata_row != nil && metadata_row.attributes[:user_name] == @metadata_label)
 				@metadata_row = metadata_row
 			else
-				@metadata_row = @table.items[@metadata_label]
+				@metadata_row = @table.items['METADATA', '__metadata__']
 			end
 
 			if(server_users != nil)
 				@server_users = server_users
 			else
-				@server_users = ServerUsers.new(@dynamo_table, @dynamo_primary_key, @metadata_label)
+				@server_users = ServerUsers.new(@dynamo_table)
 			end
 
 			if(!@user_row.exists?())
@@ -74,27 +72,59 @@ module ZepplenAWS
 			end
 		end
 
+		# User Name
+		#
+		# @return [String]
 		def user_name()
 			return @user_name
 		end
 
+		# Hash of files associated with user's profile
+		#
+		# @return [Hash]
 		def files()
 			return @user_data['files']
 		end
 
+		# Remove file from user's profile
+		#
+		# Note: the file will be removed from S3 Before object is saved!
+		#
+		# @param [String] Remote file location of file to remove
 		def remove_file(file_name)
-			@user_data['files'].delete(file_name)
+			if(@user_data['files'].has_key?(file_name))
+				s3 = AWS::S3.new()
+				bucket = s3.buckets[@server_users.user_file_bucket]
+				bucket.objects[@user_data['files'][file_name]['s3_path']].delete()
+				@user_data['files'].delete(file_name)
+			end
 			@dirty = true
+			return nil
 		end
 
+		# Add File Path
+		#
+		# Note: This will add the file to S3 Before the object is saved!
+		#
+		# @param [String] Location of file to add
+		# @param [String] Destination in the user's home dir to place file on remove servers
+		# @param [String] Linux file mode (eg: '600')
 		def add_file_path(local_path, remote_path, file_mode)
 			if(!File.readable?(local_path))
 				raise "Can Not Read #{local_path}"
 			end
 			data = File.read(local_path)
 			add_file_data(data, remote_path, file_mode)
+			return nil
 		end
 
+		# Add File Path
+		#
+		# Note: This will add the file to S3 Before the object is saved!
+		#
+		# @param [String] File data
+		# @param [String] Destination in the user's home dir to place file on remove servers
+		# @param [String] Linux file mode (eg: '600')
 		def add_file_data(data, remote_path, file_mode)
 			s3_path = @server_users.user_file_bucket()
 			if(!s3_path)
@@ -107,61 +137,113 @@ module ZepplenAWS
 			file_size = bucket.objects[file_path].content_length.to_i
 			@user_data['files'][remote_path] = {'s3_path' => file_path, 'mode' => file_mode, 'content_length' => file_size}
 			@dirty = true
+			return nil
 		end
 
+		# Shell
+		#
+		# @return [String] User's shell
 		def shell()
 			return @user_data['shell']
 		end
 
+		# Set Shell
+		#
+		# @param [String] Set user's shell. (Default: /bin/bash)
 		def shell=(shell)
 			@user_data['shell'] = shell
 			@dirty = true
+			return nil
 		end
 
+		# User State
+		#
+		# @return [String] User State (ACTIVE/INACTIVE)
 		def state()
 			return @user_data['state']
 		end
 
+		# Set User State
+		#
+		# @param [String/Symbol] User State (ACTIVE/INACTIVE)
 		def state=(state)
 			@user_data['state'] = (state.upcase.to_s == 'ACTIVE' ? 'ACTIVE' : 'INACTIVE')
 			@dirty = true
+			return nil
 		end
 
+		# Public Key
+		#
+		# @return [String] SSH Public Key
 		def public_key()
 			return @user_data['public_key']
 		end
 
+		# Set Public Key
+		#
+		# Setting the public key also sets the public_key_expire date.
+		#
+		# @param [String] SSH Public Key
 		def public_key=(key)
 			if(@user_data['public_key'] != key)
 				@user_data['public_key'] = key
 				@user_data['public_key_expire'] = (Date.today + @server_users.max_key_age).to_s
 				@dirty = true
 			end
+			return nil
 		end
 
+		# Public Key Expire Date
+		#
+		#	This is only set when the public_key value is set
+		#
+		# @return [String] Public Key Expire Date (String)
 		def public_key_expire()
 			return @user_data['public_key_expire']
 		end
 
+		# Full Name
+		#
+		# @return [String] User's full name
 		def full_name()
 			return @user_data['full_name']
 		end
 
+		# Set Full Name
+		#
+		# @param [String] User's full name
 		def full_name=(name)
 			if(@user_data['full_name'] != name)
 				@user_data['full_name'] = name
 				@dirty = true
 			end
+			return nil
 		end
 
+		# User ID
+		#
+		# Linux User ID (set automaticaly at user creation)
+		#
+		# @return [Integer] Linux user id
 		def user_id()
 			return @user_data['user_id']
 		end
 
+		# Identity
+		#
+		# Used to identify if the user entry has changed. Incremented on each write to DynamoDB for this user.
+		#
+		# @return [Integer] Identity
 		def identity()
 			return @user_data['identity']
 		end
 
+		# Remove Access
+		#
+		# Remove's a users access from a Tag Name => Tag Value combination
+		#
+		# @param [String] EC2 Tag Name to target (Case Sensitive)
+		# @param [String] EC2 Tag Value to target (Case Sensitive)
 		def remove_access(tag_name, tag_value)
 			if(!@metadata_row.attributes[:tags].include?(tag_name))
 				raise "User Access Tag Name #{tag_name} Not In [#{@metadata_row.attributes[:tags].to_a.join(', ')}]"
@@ -175,8 +257,17 @@ module ZepplenAWS
 			end
 			@user_data[tag_key_name].delete(tag_value)
 			@dirty = true
+			return nil
 		end
 
+		# Add Access
+		#
+		# Users are targeted to a server by EC2 Tags. The list of valid tags is listed at the environmen level.
+		# run --configure to change the list of valid tags
+		#
+		# @param [String] EC2 Tag Name
+		# @param [String] EC2 Tag Value
+		# @param [Object] Grant Sudo access. (nil: no sudo, not_nil: sudo access)
 		def add_access(tag_name, tag_value, sudo)
 			if(!@metadata_row.attributes[:tags].include?(tag_name))
 				raise "User Access Tag Name #{tag_name} Not In [#{@metadata_row.attributes[:tags].to_a.join(', ')}]"
@@ -190,15 +281,21 @@ module ZepplenAWS
 				@user_data[tag_key_name][tag_value] = value_data
 				@dirty = true
 			end
+			return nil
 		end
 
+		# Save
+		#
+		# This call will only write to Dynamo if a change has been made.
+		# When we update the row we also update the identity of the row. This will allows us to save
+		# calls to Dynamo/S3 when we write the users to the remote servers
 		def save()
 			if(!@dirty)
 				return
 			end
 			@user_row.attributes.update do |u|
 				@user_data.each_pair do |key,value|
-					if(key != 'user_name' && key != 'identity')
+					if(key != 'user_name' && key != 'identity' && key != 'type')
 						if(value == nil)
 							u.delete(key)
 						else
@@ -224,8 +321,12 @@ module ZepplenAWS
 			end
 			@metadata_row.attributes.add(:identity => 1)
 			@dirty = false
+			return nil
 		end
 
+		# Display User
+		#
+		# Prints the user's profile to the screen with console colors enabled
 		def display()
 			puts "Full Name: ".green()+"#{@user_data['full_name']}".light_blue
 			puts "UserName: ".green()+"#{@user_name}".light_blue
@@ -245,8 +346,14 @@ module ZepplenAWS
 				puts "  ~/#{remote_path}".light_cyan+" (#{file_data['content_length']})".yellow
 			end
 			puts
+			return nil
 		end
 
+		# Access Tags
+		#
+		# Returns a list of the EC2 Tags user has associated to their profile
+		#
+		# @return [Hash] EC2 Tag names and their values to match on
 		def access_tags()
 			tag_columns = {}
 			@user_data.each_pair do |key, value|

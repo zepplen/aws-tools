@@ -29,6 +29,7 @@ module ZepplenAWS
 		autoload :DynamoDB, 'zepplen_aws/aws/dynamo_db'
 		autoload :InstanceData, 'zepplen_aws/aws/instance_data'
 
+		# Sets the AWS Configuration from the Env class.
 		def self.init!()
 			::AWS.config(:access_key_id => Env.options[:aws_access_key_id], :secret_access_key => Env.options[:aws_secret_access_key])
 		end

@@ -14,38 +14,26 @@
 
 module ZepplenAWS
 
-	# = Manage Server Users
+	# = Local Server Users
 	#
-	# This class is intended to be used by both the CLI scripts provided, and 3rd party tools
-	# written by you! 
-	#
+	#  This class is not inteded to be used by 3rd parties
 	class ServerLocalUsers
 	require 'etc'
 
-		def initialize(dynamo_table = nil, dynamo_primary_key = nil, metadata_label = nil)
-			@dynamo_table = dynamo_table || Env[:dynamo_table]
-			@dynamo_primary_key = dynamo_primary_key || Env[:dynamo_primary_key]
-			@dynamo_primary_key = @dynamo_primary_key.to_sym
-			@metadata_label = metadata_label || Env[:metadata_label]
+		def initialize(dynamo_table = nil)
+			@dynamo_table = dynamo_table || Env[:dynamo_table] || 'users'
 
 			if(@dynamo_table == nil)
-				raise "DynamoDB Table Name Required"
+				raise Exceptions::Users::MissingOption, "DynamoDB Table Name Required"
 			end
 
-			if(@dynamo_primary_key == nil)
-				raise "DynamoDB Table Hash Key Required"
-			end
-
-			if(@metadata_label == nil)
-				raise "DynamoDB Metadata Label Required"
-			end
-
-			@server_users = ServerUsers.new(@dynamo_table, @dynamo_primary_key, @metadata_label)
+			@server_users = ServerUsers.new(@dynamo_table)
 
 			@dynamo = AWS::DynamoDB.new()
 			@table = @dynamo.tables[@dynamo_table]
-			@table.hash_key = [@dynamo_primary_key, :string]
-			@metadata = @table.items[@metadata_label]
+			@table.hash_key = {:type => :string}
+			@table.range_key = {:user_name => :string}
+			@metadata = @table.items['METADATA', '__metadata__']
 
 			@instance_data = AWS::InstanceData.new
 			@tags = {}
@@ -64,7 +52,7 @@ module ZepplenAWS
 			@local_user_file = user_file
 		end
 
-		def update!(commit)
+		def update!()
 			dynamo_users = load_metadata_from_dynamo()
 			local_users = load_from_file()
 			static_updates = {}
@@ -97,36 +85,59 @@ module ZepplenAWS
 			rescue ArgumentError
 				raise "Can Not Find Root User!!!"
 			end
+
 			users[:local_users].each_pair do |user_name, user_data|
 				begin
 					etc_user = Etc.getpwnam(user_name)
 				rescue ArgumentError
-					system "useradd -d /home/#{user_name} -c \"#{user_data[:full_name]}\" -m -s #{user_data[:shell]} -u #{user_data[:user_id]} -U #{user_name}"
+					if(user_data[:home])
+						home_dir = user_data[:home]
+					else
+						home_dir = "/home/#{user_name}"
+					end
+					system "useradd -d #{home_dir} -c \"#{user_data[:full_name]}\" -m -s #{user_data[:shell]} -u #{user_data[:user_id]} -U #{user_name}"
+					etc_user = Etc.getpwnam(user_name)
 				end
-				user_gid = Etc.getgrnam(user_name)['gid']
+				home_dir = etc_user['dir']
+				user_uid = etc_user['uid']
+				user_gid = etc_user['gid']
 				if(user_data[:sudo])
 					system "usermod -a -G #{users[:metadata][:sudo_group]} #{user_name}"
 				else
 					system "usermod -G #{user_name} #{user_name}"
 				end
-				if(!File.exist?("/home/#{user_name}/.ssh"))
-					system "mkdir /home/#{user_name}/.ssh"
-					system "chmod 700 /home/#{user_name}/.ssh"
-					system "chown #{user_name}:#{user_name} /home/#{user_name}/.ssh"
+				if(!File.exist?("#{home_dir}/.ssh"))
+					system "mkdir #{home_dir}/.ssh"
+					system "chmod 750 #{home_dir}/.ssh"
+					system "chown root:#{user_name} #{home_dir}/.ssh"
 				end
-				if(Date.parse(user_data[:public_key_expire]) > Date.today)
-					write_local_file("/home/#{user_name}/.ssh/authorized_keys", '640', user_data[:public_key], root_uid, user_gid)
+				if(user_data[:public_key] && Date.parse(user_data[:public_key_expire]) > Date.today)
+					write_local_file("#{home_dir}/.ssh/authorized_keys", '640', user_data[:public_key], root_uid, user_gid)
 				else
-					write_local_file("/home/#{user_name}/.ssh/authorized_keys", '640', 'Revoked', user_data[:user_id], user_gid)
+					write_local_file("#{home_dir}/.ssh/authorized_keys", '640', 'Revoked', root_uid, user_gid)
 				end
 				if(static_update[user_name] && user_data[:files])
 					s3 = AWS::S3.new()
 					bucket = s3.buckets[users[:metadata][:user_file_bucket]]
 					user_data[:files].each_pair do |file_name, file_data|
 						s3object = bucket.objects[file_data['s3_path']]
-						write_local_file("/home/#{user_name}/#{file_name}", file_data['mode'], s3object.read, user_data[:user_id], user_gid)
+						write_local_file("#{home_dir}/#{file_name}", file_data['mode'], s3object.read, user_uid, user_gid)
 					end
 				else
+				end
+			end
+
+			users[:local_remove_users].each do |user_name|
+				begin
+					if(user_name != 'root')
+						etc_user = Etc.getpwnam(user_name)
+						if(File.exists?("#{etc_user['dir']}/.ssh/authorized_keys"))
+							File.delete("#{etc_user['dir']}/.ssh/authorized_keys")
+						end
+						system "pkill -u #{user_name}"
+						system "userdel -f #{user_name}"
+					end
+				rescue ArgumentError
 				end
 			end
 		end
@@ -149,22 +160,28 @@ module ZepplenAWS
 
 		def load_users_from_dynamo(users)
 			@table.items.where(:type => 'USER').where(:state => 'ACTIVE').each do |row|
-				user = ServerUser.new(row.attributes[:user_name], @dynamo_table, @dynamo_primary_key, @metadata_label, row)
+				user = ServerUser.new(row.attributes[:user_name], @dynamo_table, row, @metadata, @server_users)
 				@tags.each_pair do |instance_tag, instance_value|
 					if(user.access_tags.has_key?(instance_tag) && user.access_tags[instance_tag].has_key?(instance_value))
 						add_user(user, instance_tag, instance_value, users)
+					else
+						remove_user(user.user_name, users)
 					end
 				end
+			end
+			@table.items.where(:type => 'USER').where(:state => 'INACTIVE').each do |row|
+				remove_user(row.attributes[:user_name])
 			end
 			save_to_file(users)
 			return users
 		end
 
 		def load_metadata_from_dynamo()
-			metadata = @table.items[@metadata_label]
+			metadata = @metadata
 			users = {}
 			users[:metadata] = {}
 			users[:local_users] = {}
+			users[:local_remove_users] = []
 			users[:metadata][:identity] = metadata.attributes['identity'].to_i
 			users[:metadata][:max_key_age] = metadata.attributes['max_key_age'].to_i
 			users[:metadata][:sudo_group] = metadata.attributes['sudo_group']
@@ -179,10 +196,8 @@ module ZepplenAWS
 				folder_name.split('/').each do |dir|
 					if(dir != '')
 						base_path += "#{dir}/"
-puts "Checking #{base_path}"
 						if(!Dir.exist?(base_path))
 							begin
-puts "Making #{base_path}"
 								Dir.mkdir(base_path, 0700)
 							rescue SystemCallError
 								raise "Can not create folder #{base_path}"
@@ -204,8 +219,13 @@ puts "Making #{base_path}"
 			else
 				users = {}
 				users[:local_users] = {}
+				users[:local_remove_users] = []
 			end
 			return users
+		end
+
+		def remove_user(user_name, users)
+			users[:local_remove_users] << user_name
 		end
 
 		def add_user(user_object, tag_name, tag_value, users)
@@ -230,9 +250,6 @@ puts "Making #{base_path}"
 			tag_names.each do |tag|
 				@tags[tag] = intsance_tags[tag]
 			end
-		end
-
-		def update_required?(local_users)
 		end
 
 	end

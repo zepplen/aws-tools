@@ -32,11 +32,6 @@ OptionParser.new do |opts|
 		options[:dynamo_primary_key] = key
 	end
 
-	options[:metadata_label] = '__zepplen_user_metadata__'
-	opts.on('--metadata-label LABEL', 'This script keeps a row of metadata in the table. (default: __zepplen_user_metadata__)') do |label|
-		options[:metadata_label] = label
-	end
-
 	options[:configure] = false
 	opts.on('--configure', 'Create and Configure User Environment') do
 		options[:configure] = true
@@ -126,11 +121,11 @@ if(ZepplenAWS::Env[:dynamo_primary_key] == nil)
 	ZepplenAWS::Env[:dynamo_primary_key] = 'user_name'
 end
 
-if(ZepplenAWS::Env[:metadata_label] == nil)
-	ZepplenAWS::Env[:metadata_label] = '__zepplen_user_metadata__'
-end
-
 server_users = ZepplenAWS::ServerUsers.new()
+if(!server_users.exists?)
+	puts "Configuration Not Found!"
+	options[:configure] = true
+end
 
 if(options[:configure])
 	configs = {}
@@ -143,20 +138,6 @@ if(options[:configure])
 	dynamo_table = gets.chomp
 	if(dynamo_table != '')
 		ZepplenAWS::Env[:dynamo_table] = dynamo_table
-	end
-
-	puts
-	print "DynamoDB Table Hash Key [#{ZepplenAWS::Env[:dynamo_primary_key]}]: "
-	dynamo_primary_key = gets.chomp
-	if(dynamo_primary_key != '')
-		ZepplenAWS::Env[:dynamo_primary_key] = dynamo_primary_key
-	end
-
-	puts
-	print "Metadata Row Label [#{ZepplenAWS::Env[:metadata_label]}]: "
-	metadata_label = gets.chomp
-	if(metadata_label != '')
-		ZepplenAWS::Env[:metadata_label] = metadata_label
 	end
 
 	puts

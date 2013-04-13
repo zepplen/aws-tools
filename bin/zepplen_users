@@ -27,26 +27,9 @@ OptionParser.new do |opts|
 		options[:dynamo_table] = table
 	end
 
-	options[:dynamo_primary_key] = 'user_name'
-	opts.on('--dynamo-primary-key KEY_NAME', 'Column name of table primary key (default: user_name)') do |key|
-		options[:dynamo_primary_key] = key
-	end
-
-	options[:metadata_label] = '__zepplen_user_metadata__'
-	opts.on('--metadata-label LABEL', 'This script keeps a row of metadata in the table. (default: __zepplen_user_metadata__)') do |label|
-		options[:metadata_label] = label
-	end
-
 	options[:local_users] = nil
 	opts.on('--local-users-file FILE', 'Location to store local state cache (default: /etc/zeppeln_aws/local_users.yaml)') do |file|
 		options[:local_users] = file
-	end
-
-	#TODO: Figure out a good way to set this.... aws-sdk does not seem to have a good method at the moment
-
-	options[:commit] = false
-	opts.on('--commit', 'Commit the changes') do
-		options[:commit] = true
 	end
 
 end.parse!
@@ -57,18 +40,10 @@ if(ZepplenAWS::Env[:dynamo_table] == nil)
 	ZepplenAWS::Env[:dynamo_table] = 'users'
 end
 
-if(ZepplenAWS::Env[:dynamo_primary_key] == nil)
-	ZepplenAWS::Env[:dynamo_primary_key] = 'user_name'
-end
-
-if(ZepplenAWS::Env[:metadata_label] == nil)
-	ZepplenAWS::Env[:metadata_label] = '__zepplen_user_metadata__'
-end
-
 if(ZepplenAWS::Env[:local_users] == nil)
 	ZepplenAWS::Env[:local_users] = '/etc/zeppeln_aws/local_users.yaml'
 end
 
 server_users = ZepplenAWS::ServerLocalUsers.new()
 server_users.local_user_file = ZepplenAWS::Env[:local_users]
-server_users.update!(options[:commit])
+server_users.update!()

@@ -20,94 +20,143 @@ module ZepplenAWS
 	# written by you! 
 	#
 	# The metadata for the environment (options set using the configure method), are stored
-	# in a DynamoDB row along with the users. The default name for this row is '__zepplen_user_metadata__'.
-	# This name can be changed via the metadata_label parameter
-	#
+	# in a DynamoDB row along with the users. The default name for this row is '__metadata__'.
 	# 
 	#
 	class ServerUsers
 
-		def initialize(dynamo_table = nil, dynamo_primary_key = nil, metadata_label = nil)
+		# Server Users
+		#
+		# @param optional [String] Dynamo table name, if not provided will pull from Env, or default to 'users'
+		def initialize(dynamo_table = nil)
 			@dynamo_table = dynamo_table || Env[:dynamo_table] || 'users'
-			@dynamo_primary_key = dynamo_primary_key || Env[:dynamo_primary_key] || 'user_name'
-			@dynamo_primary_key = @dynamo_primary_key.to_sym
-			@metadata_label = metadata_label || Env[:metadata_label] || '__zepplen_user_metadata__'
 
+			# I don't there there is any way to reach this error state....
 			if(@dynamo_table == nil)
-				raise "DynamoDB Table Name Required"
-			end
-
-			if(@dynamo_primary_key == nil)
-				raise "DynamoDB Table Hash Key Required"
-			end
-
-			if(@metadata_label == nil)
-				raise "DynamoDB Metadata Label Required"
+				raise Exceptions::Users::MissingOption, "DynamoDB Table Name Required"
 			end
 
 			@dynamo = AWS::DynamoDB.new()
 			@table = @dynamo.tables[@dynamo_table]
-			@table.hash_key = [@dynamo_primary_key, :string]
-			@metadata = @table.items[@metadata_label]
-
+			@table.hash_key = {:type => :string}
+			@table.range_key = {:user_name => :string}
+			if(!@table.exists?)
+				raise Exceptions::Users::NoDynamoTable, "Could Not Access DynamoDB Table: #{@dynamo_table}"
+			end
 			@local_user_data = {}
+
+			@metadata = @table.items['METADATA', '__metadata__']
 		end
 
-		def update_from_dynamo(local_users = nil)
-			if(!local_users)
-				local_users = Env[:local_users]
-			end
-			if(!update_required?(local_users))
-				return
-			end
-			@table.items.where(:type => 'USER').each do |row|
-			end
+		# Exists?
+		#
+		# Reflects if there is a _metadata_ row availible. If not use needs to configure environment.
+		def exists?()
+			return @metadata.exists?
 		end
 
+		# Identity
+		#
+		# This number is incremented any time a configuration changes, or a user profile is updated.
+		# We use this to reduce the number of dynamo calls each client has to make.
+		#
+		# @return [Integer] Identity
 		def identity()
 			return @metadata.attributes[:identity].to_i
 		end
 
+		# User File Bucket
+		#
+		# @return [String] Name of S3 Bucket user files are stored in
 		def user_file_bucket()
 			return @metadata.attributes[:user_file_bucket]
 		end
 
+		# Set User File Bucket
+		#
+		# @param [String] Name of S3 Bucket to store user files in. Nil to disable feature
 		def user_file_bucket=(s3_path)
 			update_metadata(:user_file_bucket => s3_path)
 			return nil
 		end
 
+		# Max Key Age
+		#
+		# Number of Days to continue using an SSH Key before it is expired and removed from all servers
+		#
+		# @return [Integer] Max key age (days)
 		def max_key_age()
 			return @metadata.attributes[:max_key_age].to_i
 		end
 
+		# Set Max Key Age
+		#
+		# Number of Days to continue using an SSH Key before it is expired and removed from all servers
+		#
+		# @param [Integer] Max key age (days)
 		def max_key_age=(key_age)
 			update_metadata(:key_age => key_age)
 			return nil
 		end
 
+		# Next UID
+		#
+		# Next linux uid to use. We make sure that each user's uid is consistant accross all servers. This
+		# prevents users from having broken permissions when they are removed and re-added to an instance.
+		#
+		# @return [Integet] Next uid
 		def next_uid()
 			return @metadata.attributes[:next_uid].to_i
 		end
 
+		# Set Next UID
+		#
+		# Next linux uid to use. We make sure that each user's uid is consistant accross all servers. This
+		# prevents users from having broken permissions when they are removed and re-added to an instance.
+		#
+		# Warning: Be sure not to set to a range already used by existing users, or existing accounts on your servers.
+		#
+		# @param [Integer] Next uid
 		def next_uid=(next_uid)
 			update_metadata(:next_uid => next_uid)
 			return nil
 		end
 
+		# Sudo Group
+		#
+		# Group that user will be added to grant sudo access to an instance.
+		#
+		# @return [String] sudo group
 		def sudo_group()
 			return @metadata.attributes[:sudo_group]
 		end
 
+		# Set Sudo Group
+		#
+		# Group that user will be added to grant sudo access to an instance. Please be sure this group is configured
+		# correctly on all of your instances. Group should grant NOPASSWD access, as this script will NOT set a
+		# passwor for any user.
+		#
+		# @param [String] sudo group
 		def sudo_group=(sudo_group)
 			update_metadata(:sudo_group => sudo_group)
 			return nil
 		end
 
+		# Tags
+		#
+		# Returns the list of EC2 tags accessible to taget users's access.
+		#
+		# @return [Array] List of EC2 tags valid for granting user access to servers.
 		def tags()
 			return @metadata.attributes[:tags].to_a
 		end
 
+		# Set Tags
+		#
+		# Overwrite existing tags with new Array of EC2 Tags
+		#
+		# @param [Array[String]] EC2 Tags that are valid for granting user access to servers.
 		def tags=(tags)
 			update_metadata(:tags => tags)
 			@metadata.attributes.update do |u|
@@ -117,6 +166,11 @@ module ZepplenAWS
 			return nil
 		end
 
+		# Add Tags
+		#
+		# Add tags witn Array of EC2 Tags
+		#
+		# @param [Array[String]] EC2 Tags that are valid for granting user access to servers.
 		def add_tags(tags)
 			@metadata.attributes.update do |u|
 				u.add(:tags => tags)
@@ -125,6 +179,11 @@ module ZepplenAWS
 			return nil
 		end
 
+		# Remove Tags
+		#
+		# Revmove tags witn Array of EC2 Tags
+		#
+		# @param [Array[String]] EC2 Tags that are no longer valid for granting user access to servers.
 		def remove_tags(tags)
 			@metadata.attributes.update do |u|
 				u.delete(:tags => tags)
@@ -133,20 +192,17 @@ module ZepplenAWS
 			return nil
 		end
 
-		def user_file_bucket()
-			return @metadata.attributes[:user_file_bucket]
-		end
-
-		def user_file_bucket=(s3_path)
-			update_metadata(:user_file_bucket => s3_path)
-			return nil
-		end
-
+		# Configure Envoronment
+		#
+		# Allows users to set multiple parameters at once
+		# == Valid Parameters
+		# :next_uid, :max_key_age, :tags, :sudo_group, :user_file_bucket
+		#
+		# @param [Hash] Parameter values to set
 		def configure(config)
 			valid_configs = [:next_uid, :max_key_age, :tags, :sudo_group]
 			to_use_config = config.select{|k,v| valid_configs.include?(k)}
 			@metadata.attributes.update do |item_data|
-				item_data.set(:type => 'METADATA')
 				item_data.set(to_use_config)
 				if(config.has_key?(:user_file_bucket))
 					if(config[:user_file_bucket])
@@ -163,10 +219,15 @@ module ZepplenAWS
 			end
 		end
 
+		# Users
+		#
+		# Returns an array of ServerUser objects
+		#
+		# @return [Hash[ServerUser]] 
 		def users()
 			users = {}
 			@table.items.where(:type => 'USER').each do |user_row|
-				users[user_row.attributes[@dynamo_primary_key]] = ServerUser.new(user_row.attributes[@dynamo_primary_key], nil, nil, nil, user_row, @metadata)
+				users[user_row.attributes[:user_name]] = ServerUser.new(user_row.attributes[:user_name], @dynamo_table, user_row, @metadata, self)
 			end
 			return users
 		end
@@ -191,6 +252,7 @@ module ZepplenAWS
 				return true
 			end
 			@local_user_data = Yaml.load(local_users)
+			return false
 		end
 
 	end

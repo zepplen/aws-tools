@@ -21,6 +21,7 @@ module ZepplenAWS
 	class AutoDNS
 		require 'colorize'
 
+		# Initializes the object.
 		def initialize()
 			@dns_precidence = 0
 			@dns_pool = []
@@ -54,6 +55,7 @@ module ZepplenAWS
 			end
 			reduce_dns_pool()
 			process_zone_updates()
+			return nil
 		end
 
 		private
