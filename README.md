@@ -10,7 +10,7 @@ You will need the following apt-get packages to install all the required gems:
 3. libxml2-dev
 4. libxslt1-dev
 
-Tools
+##Tools
 1. Automatic Route53 DNS Creation: zepplen_dns
 2. Centralized User Management: zepplen_users, zepplen_users_admin
 
@@ -18,7 +18,7 @@ The goal of ZepplenAWS is to provide useful tools for maintaining Linux instance
 Development and testing is currently being done on Ubuntu instances, however they should on any
 flavor of *nix.
 
-= Zepplen Users
+##Zepplen Users
 Required zepplen_users_admin Permissions
 1. DynamoDB
   * dynamodb:BatchGetItem
